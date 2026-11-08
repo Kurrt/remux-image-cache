@@ -47,6 +47,9 @@ curl -sI "https://your-remux/items/<an item id>/images/primary?fillWidth=300" | 
 The warmer logs its progress to `docker logs remux-warmer`. With everything on, the first fill of a large library
 takes days at its polite rates: read "What it warms" first and leave out the stages you don't want.
 
+`compose.example.yaml` also has an optional, commented-out block that compresses Remux's JSON. It sends it
+uncompressed, and a TV guide can reach 14.6 MB. Read the notes above it before turning it on.
+
 Make the `remux-images` router's `priority` higher than your Remux router's if you've changed either.
 
 To remove it, stop both containers and delete the `remux-images` router. Nothing else was changed.

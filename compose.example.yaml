@@ -54,6 +54,24 @@ services:
       - "traefik.http.routers.remux-images.priority=900"
       - "traefik.http.routers.remux-images.service=remux-images"
       - "traefik.http.services.remux-images.loadbalancer.server.port=8080"
+
+      # OPTIONAL: compress Remux's JSON, which it sends uncompressed (a TV guide can reach 14.6 MB). Remove the
+      # leading "# " from the lines below to turn it on. Read this first:
+      # - "service=remux" must be the name of your existing Traefik service for Remux. Change it if yours differs.
+      # - Traefik's compress middleware doesn't guard Range or 206 responses, and it also compresses any response
+      #   with no Content-Type, whatever the include list says. So the path list is what keeps video out: add only
+      #   routes that always return JSON, never a stream, a download or a route with a wildcard.
+      # - Check the list against your Remux version, and test a stream and a download after turning it on.
+      # - "$$" is how Compose writes a literal "$". Keep it.
+      # - "traefik.http.routers.remux-json.rule=Host(`${REMUX_HOSTNAME?}`) && ((Method(`GET`) && PathRegexp(`(?i)^/(items(/latest|/[0-9a-f-]{32,36}(/similar)?)?|userviews|useritems/resume|users/[0-9a-f-]{32,36}/(views|items(/latest|/resume|/[0-9a-f-]{32,36})?)|livetv/(channels|programs(/recommended)?)|shows/(nextup|[0-9a-f-]{32,36}/(episodes|seasons))|studios|persons)/*$$`)) || (Method(`POST`) && PathRegexp(`(?i)^/livetv/programs/*$$`)))"
+      # - "traefik.http.routers.remux-json.entrypoints=websecure"
+      # - "traefik.http.routers.remux-json.tls=true"
+      # - "traefik.http.routers.remux-json.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      # - "traefik.http.routers.remux-json.priority=800"
+      # - "traefik.http.routers.remux-json.service=remux"
+      # - "traefik.http.routers.remux-json.middlewares=remux-json"
+      # - "traefik.http.middlewares.remux-json.compress.includedcontenttypes=application/json"
+      # - "traefik.http.middlewares.remux-json.compress.encodings=zstd,gzip"
     profiles:
       - remux-images
       - all
