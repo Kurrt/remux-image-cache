@@ -1,0 +1,114 @@
+# An image cache and resizer in front of Remux's image route, and a worker that fills it in the background.
+# See README.md. Copy this to compose.yaml and set the values in .env (see .env.example).
+#
+# The cache is routed by Traefik labels on its own container, so Remux and its own routers are unchanged and
+# Remux isn't recreated. If the cache stops or turns unhealthy, Traefik drops its router and every request goes
+# to the plain Remux router, uncached and at full size. That is the safe failure for posters and playback.
+# A full disk is the exception: first views of new images fail until there's space.
+services:
+  remux-images:
+    image: nginx:1.30-alpine
+    container_name: remux-images
+    restart: unless-stopped
+    # With the warmer stopped, nginx writes a line here for every image it serves, so this needs a limit.
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+    # A restart resets nginx's inactive timer, so that alone can't promise when an entry leaves. This removes
+    # anything older than 178 days, at the start and then daily, to stay inside TMDB's limit of 6 months.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        while :; do nice -n 19 find /cache -type f -mtime +178 -delete; sleep 86400; done &
+        exec nginx -g 'daemon off;'
+    expose:
+      - 8080
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${DATA_DIR:-./data}/cache:/cache
+      # Where nginx sends its notes to the warmer. nginx starts and serves normally without it.
+      - ${DATA_DIR:-./data}/warmer/signal:/run/warmer:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Traefik ignores this container until it's healthy.
+      start_period: 10s
+      start_interval: 1s
+    networks:
+      - remux
+    labels:
+      - "traefik.enable=true"
+
+      # Posters, thumbs, backdrops and logos. Every spelling Remux would route on GET or HEAD comes here
+      # whatever its query, because nginx sees the raw query and Traefik's matchers don't. The priority has
+      # to be above your Remux router's.
+      - "traefik.http.routers.remux-images.rule=Host(`${REMUX_HOSTNAME?}`) && (Method(`GET`) || Method(`HEAD`)) && PathRegexp(`(?i)^(/emby|/jellyfin)?/items/[^/]+/images/[^/]+(/[^/]+)?/*$$`)"
+      - "traefik.http.routers.remux-images.entrypoints=websecure"
+      - "traefik.http.routers.remux-images.tls=true"
+      - "traefik.http.routers.remux-images.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.remux-images.priority=900"
+      - "traefik.http.routers.remux-images.service=remux-images"
+      - "traefik.http.services.remux-images.loadbalancer.server.port=8080"
+    profiles:
+      - remux-images
+      - all
+
+  remux-warmer:
+    image: python:3.14-alpine
+    container_name: remux-warmer
+    restart: unless-stopped
+    command: ["python3", "-I", "/app/warmer.py"]
+    # An unprivileged user, with Remux's data folder read-only. Create the two folders below first, owned by this
+    # user, or Docker creates them owned by root and the worker can't write to them. The README has the command.
+    user: "65534:65534"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    mem_limit: 384m
+    cpus: 0.5
+    # The default queue of 10 notes is too short for a page of posters arriving at once.
+    sysctls:
+      net.unix.max_dgram_qlen: 512
+    # Optional settings, as WARMER_<NAME>=value. The README lists them.
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./warmer/warmer.py:/app/warmer.py:ro
+      # The whole folder, because SQLite replaces the -wal and -shm files when Remux restarts, and a bind of the
+      # single files would go on showing the old ones without any error.
+      - ${REMUX_DATA_DIR?}:/remux:ro
+      - ${DATA_DIR:-./data}/warmer/state:/state
+      - ${DATA_DIR:-./data}/warmer/signal:/run/warmer
+    healthcheck:
+      test: ["CMD", "python3", "-I", "/app/warmer.py", "--health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "2"
+    networks:
+      - remux
+    profiles:
+      - remux-warmer
+      - all
+
+# The network Remux and Traefik share. The cache reaches Remux at http://remux:3000, so Remux's container
+# has to be called remux. Change both names in nginx/nginx.conf if yours isn't.
+networks:
+  remux:
+    name: ${REMUX_NETWORK:-remux}
+    external: true
