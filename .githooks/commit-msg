@@ -1,0 +1,8 @@
+#!/bin/sh
+# Checks each commit message as you write it. Turn it on with:
+#   git config core.hooksPath .githooks
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "commit-msg: python3 not found, skipping the commit check" >&2
+    exit 0
+fi
+exec python3 -I scripts/check_commits.py --message-file="$1"

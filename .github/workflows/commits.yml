@@ -1,0 +1,29 @@
+name: Commits
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the pull request title
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: python3 -I scripts/check_commits.py --subject="$TITLE"
+      - name: Check the commits
+        env:
+          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          AFTER: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 -I scripts/check_commits.py --range="$BEFORE..$AFTER"
